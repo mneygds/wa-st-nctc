@@ -1,0 +1,73 @@
+name: Deploy Streamlit App to Azure Web App
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+    RESOURCE_GROUP: rg_customerchurn
+    AZURE_WEBAPP_NAME: customerchurn-test      # <-- change this
+    PYTHON_VERSION: "3.13"
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Azure Login
+      uses: azure/login@v2
+      with:
+        client-id: ${{ vars.AZURE_CLIENTID }}
+        tenant-id: ${{ vars.AZURE_TENANTID }}
+        subscription-id: ${{ vars.AZURE_SUBSCRIPTION }}
+
+    - name: Set Python Runtime Stack
+      run: |
+        az webapp config set \
+          --name ${{ env.AZURE_WEBAPP_NAME }} \
+          --resource-group ${{ env.RESOURCE_GROUP }} \
+          --linux-fx-version "PYTHON|${{ env.PYTHON_VERSION }}"
+
+    - name: Update Startup Command
+      run: |
+        az webapp config set \
+          --name $AZURE_WEBAPP_NAME \
+          --resource-group $RESOURCE_GROUP \
+          --startup-file "streamlit run app.py --server.port 8000 --server.address 0.0.0.0"
+
+
+    - name: Update Environment Variables from .env
+      run: |
+        echo "Loading environment variables from .env file"
+        
+        # Read .env and format for Azure
+        settings=""
+        while IFS='=' read -r key value; do
+          # Skip empty lines and comments
+          if [[ ! -z "$key" && ! "$key" =~ ^#.* ]]; then
+            # Remove quotes and whitespace
+            value=$(echo "$value" | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//")
+            settings="$settings $key=$value"
+          fi
+        done < .env
+        
+        # Apply settings to Azure Web App
+        if [[ ! -z "$settings" ]]; then
+          az webapp config appsettings set \
+            --name ${{ env.AZURE_WEBAPP_NAME }} \
+            --resource-group ${{ env.RESOURCE_GROUP }} \
+            --settings $settings
+          echo "Environment variables updated successfully"
+        else
+          echo "No environment variables found in .env"
+        fi
+
+    - name: Deploy to Azure WebApp
+      uses: azure/webapps-deploy@v3
+      with:
+        app-name: ${{ env.AZURE_WEBAPP_NAME }}
+        package: .
